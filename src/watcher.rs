@@ -10,6 +10,7 @@ use std::{
 
 use mpris::{
     Event,
+    EventError,
     FindingError,
     Metadata,
     MetadataValue,
@@ -69,10 +70,12 @@ impl Watcher {
             {
                 let mut p = playing.write().expect("OMGWTFBBQ");
                 if p.is_none() {
+                    // safety: self.player is guaranteed to be Some earlier in the loop iteration
                     *p = Some(PlayingInfo::new(self.player.as_mut().unwrap().get_metadata()?, max_size))
                 }
             }
 
+            // safety: self.player is guaranteed to be Some earlier in the loop iteration
             let events = self.player.as_mut().unwrap().events()?;
 
             for evt in events {
@@ -83,6 +86,16 @@ impl Watcher {
                     },
                     Ok(Event::PlayerShutDown) => {
                         self.player = None;
+                        let mut p = playing.write().expect("OMGWTFBBQ");
+                        *p = None;
+                        break;
+                    },
+                    Err(EventError::DBusError(_)) => {
+                        // TODO: Shutting down a player seems to error without
+                        // giving PlayerShutDown, contrary to docs.
+                        self.player = None;
+                        let mut p = playing.write().expect("OMGWTFBBQ");
+                        *p = None;
                         break;
                     },
                     Err(e) => {
