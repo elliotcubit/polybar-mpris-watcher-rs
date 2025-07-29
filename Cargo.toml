@@ -2,6 +2,11 @@
 name = "polybar-mpris-watcher-rs"
 version = "1.0.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
+description = "A good music status display for polybar"
+repository = "github.com/elliotcubit/polybar-mpris-watcher-rs"
+readme = "README.md"
+keywords = ["polybar", "mpris", "music", "module"]
 
 [dependencies]
 clap = { version = "4.5.41", features = ["derive"] }
