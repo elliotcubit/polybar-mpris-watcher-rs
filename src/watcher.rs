@@ -65,6 +65,9 @@ impl Watcher {
             if self.player.is_none() {
                 self.player = Self::find_player(&self.finder)
                     .map_err(|e| format!("Error communicating with DBus: {}", e))?;
+                if self.player.is_none() {
+                    thread::sleep(time::Duration::from_millis(1000));
+                }
                 continue;
             }
 
