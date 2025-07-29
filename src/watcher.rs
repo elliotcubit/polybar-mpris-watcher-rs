@@ -63,16 +63,18 @@ impl Watcher {
         update_interval: time::Duration,
         max_size: usize,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let playing = Arc::new(RwLock::new(None));
+        let playing = Arc::new(RwLock::new(None::<PlayingInfo>));
         let playing_clone = Arc::clone(&playing);
 
         thread::spawn(move || {
             loop {
                 {
                     let mut v = playing_clone.write().unwrap();
-                    v.as_mut().map(|info: &mut PlayingInfo| {
-                        println!("{}", info.next());
-                    });
+                    if v.is_some() {
+                        println!("{}", v.as_mut().unwrap().next());
+                    } else {
+                        println!("")
+                    }
                 }
                 thread::sleep(update_interval);
             }
