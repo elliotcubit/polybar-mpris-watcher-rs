@@ -127,6 +127,7 @@ pub struct PlayingInfo {
     start: usize,
     end: usize,
     size: usize,
+    display: Option<String>,
 }
 
 impl PlayingInfo {
@@ -146,6 +147,10 @@ impl PlayingInfo {
             _ => None
         };
 
+        Self::from_info(artist, title, size)
+    }
+
+    fn from_info(artist: Option<&String>, title: Option<&String>, size: usize) -> Self {
         let s = format!(
             "{} - {} || ",
             artist.unwrap_or(&String::from(UNKNOWN)),
@@ -160,6 +165,24 @@ impl PlayingInfo {
             start: 0,
             end: min(size, len),
             size: min(size, len),
+            display: {
+                // Remove scrolling separator when it isn't necessary
+                if len - 4 <= size {
+                    Some(
+                        format!(
+                            "{:^size$}",
+                            format!(
+                                "{} - {}",
+                                artist.unwrap_or(&String::from(UNKNOWN)),
+                                title.unwrap_or(&String::from(UNKNOWN)),
+                            ),
+                            size = size,
+                        )
+                    )
+                } else {
+                    None
+                }
+            },
         }
     }
 
@@ -172,9 +195,123 @@ impl PlayingInfo {
     }
 
     fn next(&mut self) -> String {
-        let retv = self.get_window();
-        self.start = (self.start + self.size) % self.arr.len();
-        self.end = (self.end + self.size) % self.arr.len();
-        retv
+        self.display.clone().unwrap_or(
+            {
+                let retv = self.get_window();
+                self.start = (self.start + self.size) % self.arr.len();
+                self.end = (self.end + self.size) % self.arr.len();
+                retv
+            }
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test(info: &mut PlayingInfo, frames: Vec<&str>) {
+        for frame in frames {
+            assert_eq!(frame, info.next());
+        }
+    }
+
+    #[test]
+    fn test_no_info() {
+        test(
+            &mut PlayingInfo::from_info(None, None, 1),
+            vec![ "?", "?", "?", " ", "-", " ", "?", "?", "?", " ", "|", "|", " ", "?" ],
+        )
+    }
+
+    #[test]
+    fn test_entire_subject_fits_in_window() {
+        test(
+            &mut PlayingInfo::from_info(
+                Some(&"A".to_string()),
+                Some(&"B".to_string()),
+                5,
+            ),
+            vec![ "A - B", "A - B" ],
+        )
+    }
+
+    #[test]
+    // If we have space to spare the subject should be centered and padded out
+    // to fill the entire window
+    fn test_window_bigger_than_subject() {
+        test(
+            &mut PlayingInfo::from_info(
+                Some(&"A".to_string()),
+                Some(&"B".to_string()),
+                7,
+            ),
+            vec![ " A - B ", " A - B " ],
+        );
+        test(
+            &mut PlayingInfo::from_info(
+                Some(&"A".to_string()),
+                Some(&"B".to_string()),
+                8,
+            ),
+            vec![ " A - B  ", " A - B  " ],
+        )
+    }
+
+
+    #[test]
+    fn test_scrolling() {
+        test(
+            &mut PlayingInfo::from_info(
+                Some(&"Bob Marley & The Wailers".to_string()),
+                Some(&"Easy Skanking".to_string()),
+                3,
+            ),
+            vec![ "Bob", " Ma", "rle", "y &", " Th", "e W", "ail", "ers", " - ", "Eas", "y S", "kan", "kin", "g |", "| B", "ob "],
+        )
+    }
+
+    // Some visual characters are composed of multiple unicode code-points, so
+    // ensure we aren't using bytes or chars for display breaking.
+    #[test]
+    fn test_unicode_graphemes() {
+        test(
+            &mut PlayingInfo::from_info(
+                Some(&"P\u{0065}\u{0301}n".to_string()),
+                Some(&"P\u{0065}\u{0301}n".to_string()),
+                5,
+            ),
+            vec![
+                "P\u{0065}\u{0301}n -",
+                " P\u{0065}\u{0301}n ",
+                "|| P\u{0065}\u{0301}",
+            ],
+        )
+    }
+
+    // Same deal as above but with a real song
+    //
+    // デストロイ!!!
+    // デストロイ!!!
+    // デストロイ!!!
+    // デストロイ!!!
+    //
+    #[test]
+    fn test_midori() {
+        test(
+            &mut PlayingInfo::from_info(
+                Some(&"ミドリ".to_string()),
+                Some(&"ゆきこさん".to_string()),
+                5,
+            ),
+            vec![
+                "ミドリ -",
+                " ゆきこさ",
+                "ん || ",
+                "ミドリ -",
+                " ゆきこさ",
+                "ん || ",
+            ],
+        )
     }
 }
