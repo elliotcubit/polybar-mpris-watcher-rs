@@ -30,9 +30,10 @@ const UNKNOWN: &'static str = "???";
 impl Watcher {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let finder = PlayerFinder::new()
-            .map_err(|e| format!("Failed to connect to DBUS: {}", e))?;
+            .map_err(|e| format!("Failed to connect to DBus: {}", e))?;
 
-        let player = Self::find_player(&finder)?;
+        let player = Self::find_player(&finder)
+            .map_err(|e| format!("Error communicating with DBus: {}", e))?;
 
         Ok(Self{
             finder,
@@ -62,13 +63,14 @@ impl Watcher {
 
         loop {
             if self.player.is_none() {
-                self.player = Self::find_player(&self.finder)?;
+                self.player = Self::find_player(&self.finder)
+                    .map_err(|e| format!("Error communicating with DBus: {}", e))?;
                 continue;
             }
 
             // Separate scope so that p is dropped, releasing the lock.
             {
-                let mut p = playing.write().expect("OMGWTFBBQ");
+                let mut p = playing.write().expect("Poisoned lock");
                 if p.is_none() {
                     // safety: self.player is guaranteed to be Some earlier in the loop iteration
                     *p = Some(PlayingInfo::new(self.player.as_mut().unwrap().get_metadata()?, max_size))
@@ -76,17 +78,18 @@ impl Watcher {
             }
 
             // safety: self.player is guaranteed to be Some earlier in the loop iteration
-            let events = self.player.as_mut().unwrap().events()?;
+            let events = self.player.as_mut().unwrap().events()
+                .map_err(|e| format!("Error communicating with DBus: {}", e))?;
 
             for evt in events {
                 match evt {
                     Ok(Event::TrackChanged(m)) => {
-                        let mut p = playing.write().expect("OMGWTFBBQ");
+                        let mut p = playing.write().expect("Poisoned lock");
                         *p = Some(PlayingInfo::new(m, max_size))
                     },
                     Ok(Event::PlayerShutDown) => {
                         self.player = None;
-                        let mut p = playing.write().expect("OMGWTFBBQ");
+                        let mut p = playing.write().expect("Poisoned lock");
                         *p = None;
                         break;
                     },
@@ -94,7 +97,7 @@ impl Watcher {
                         // TODO: Shutting down a player seems to error without
                         // giving PlayerShutDown, contrary to docs.
                         self.player = None;
-                        let mut p = playing.write().expect("OMGWTFBBQ");
+                        let mut p = playing.write().expect("Poisoned lock");
                         *p = None;
                         break;
                     },
