@@ -5,6 +5,7 @@ use std::{
         Arc,
         RwLock,
     },
+    cmp::min,
 };
 
 use mpris::{
@@ -15,6 +16,8 @@ use mpris::{
     Player,
     PlayerFinder,
 };
+
+use unicode_segmentation::UnicodeSegmentation;
 
 pub struct Watcher {
     finder: PlayerFinder,
@@ -36,41 +39,23 @@ impl Watcher {
         })
     }
 
-    pub fn watch(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-
+    pub fn watch(
+        &mut self,
+        update_interval: time::Duration,
+        max_size: usize,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let playing = Arc::new(RwLock::new(None));
         let playing_clone = Arc::clone(&playing);
 
         thread::spawn(move || {
             loop {
                 {
-                    let v = playing_clone.read().unwrap();
-
-                    v.as_ref().map(|metadata: &Metadata| {
-                        let artist = match metadata.get("xesam:artist") {
-                            Some(MetadataValue::Array(vvs)) => {
-                                match vvs.first() {
-                                    Some(MetadataValue::String(s)) => Some(s),
-                                    _ => None
-                                }
-                            },
-                            _ => None
-                        };
-
-                        let title = match metadata.get("xesam:title") {
-                            Some(MetadataValue::String(s)) => Some(s),
-                            _ => None
-                        };
-
-                        println!(
-                            "{} - {}",
-                            artist.unwrap_or(&String::from(UNKNOWN)),
-                            title.unwrap_or(&String::from(UNKNOWN)),
-                        );
+                    let mut v = playing_clone.write().unwrap();
+                    v.as_mut().map(|info: &mut PlayingInfo| {
+                        println!("{}", info.next());
                     });
                 }
-
-                thread::sleep(time::Duration::from_millis(2000));
+                thread::sleep(update_interval);
             }
         });
 
@@ -80,10 +65,11 @@ impl Watcher {
                 continue;
             }
 
+            // Separate scope so that p is dropped, releasing the lock.
             {
                 let mut p = playing.write().expect("OMGWTFBBQ");
                 if p.is_none() {
-                    *p = Some(self.player.as_mut().unwrap().get_metadata()?);
+                    *p = Some(PlayingInfo::new(self.player.as_mut().unwrap().get_metadata()?, max_size))
                 }
             }
 
@@ -93,7 +79,7 @@ impl Watcher {
                 match evt {
                     Ok(Event::TrackChanged(m)) => {
                         let mut p = playing.write().expect("OMGWTFBBQ");
-                        *p = Some(m);
+                        *p = Some(PlayingInfo::new(m, max_size))
                     },
                     Ok(Event::PlayerShutDown) => {
                         self.player = None;
@@ -117,3 +103,59 @@ impl Watcher {
     }
 }
 
+pub struct PlayingInfo {
+    arr: Vec<String>,
+    start: usize,
+    end: usize,
+    size: usize,
+}
+
+impl PlayingInfo {
+    fn new(metadata: Metadata, size: usize) -> Self{
+        let artist = match metadata.get("xesam:artist") {
+            Some(MetadataValue::Array(vvs)) => {
+                match vvs.first() {
+                    Some(MetadataValue::String(s)) => Some(s),
+                    _ => None
+                }
+            },
+            _ => None
+        };
+
+        let title = match metadata.get("xesam:title") {
+            Some(MetadataValue::String(s)) => Some(s),
+            _ => None
+        };
+
+        let s = format!(
+            "{} - {} || ",
+            artist.unwrap_or(&String::from(UNKNOWN)),
+            title.unwrap_or(&String::from(UNKNOWN)),
+        );
+
+        let arr  = s.graphemes(true).map(|x| x.to_string()).collect::<Vec<String>>();
+        let len = arr.len();
+
+        Self{
+            arr: arr,
+            start: 0,
+            end: min(size, len),
+            size: min(size, len),
+        }
+    }
+
+    fn get_window(&mut self) -> String {
+        if self.end > self.start {
+            self.arr[self.start .. self.end].join("")
+        } else {
+            self.arr[self.start..].join("") + &self.arr[0..self.end].join("")
+        }
+    }
+
+    fn next(&mut self) -> String {
+        let retv = self.get_window();
+        self.start = (self.start + self.size) % self.arr.len();
+        self.end = (self.end + self.size) % self.arr.len();
+        retv
+    }
+}
