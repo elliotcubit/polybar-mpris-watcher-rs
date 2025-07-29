@@ -7,6 +7,9 @@ description = "A good music status display for polybar"
 repository = "github.com/elliotcubit/polybar-mpris-watcher-rs"
 readme = "README.md"
 keywords = ["polybar", "mpris", "music", "module"]
+exclude = [
+	"assets/*",
+]
 
 [dependencies]
 clap = { version = "4.5.41", features = ["derive"] }
