@@ -6,10 +6,14 @@ It uses DBus to display the currently playing media. The text size and scrolling
 
 It supports extended unicode characters, parsing them by grapheme cluster.
 
+Pass `--(i)nclude-controls` to include basic control buttons. This will shorten the display window such
+that the overall width is `--(b)anner-size`.
+
 # Demo
 
 ![demo](assets/demo.gif)
 ![demo](assets/demo2.gif)
+![demo](assets/demo3.gif)
 
 # Installation
 
