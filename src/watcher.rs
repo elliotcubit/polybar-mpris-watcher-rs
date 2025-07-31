@@ -13,7 +13,7 @@
 // more details.
 //
 // You should have received a copy of the GNU General Public License along with
-// this program. If not, see <https://www.gnu.org/licenses/>. 
+// this program. If not, see <https://www.gnu.org/licenses/>.
 
 use std::{
     thread,
@@ -31,6 +31,7 @@ use mpris::{
     FindingError,
     Metadata,
     MetadataValue,
+    PlaybackStatus,
     Player,
     PlayerFinder,
 };
@@ -62,6 +63,7 @@ impl Watcher {
         &mut self,
         update_interval: time::Duration,
         max_size: usize,
+        include_controls: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let playing = Arc::new(RwLock::new(None::<PlayingInfo>));
         let playing_clone = Arc::clone(&playing);
@@ -71,7 +73,7 @@ impl Watcher {
                 {
                     let mut v = playing_clone.write().unwrap();
                     if v.is_some() {
-                        println!("{}", v.as_mut().unwrap().next());
+                        println!("{}", v.as_mut().unwrap().next(include_controls));
                     } else {
                         println!("")
                     }
@@ -90,12 +92,22 @@ impl Watcher {
                 continue;
             }
 
+            let name = self.player.as_ref().unwrap().bus_name_player_name_part().to_string();
+            let playback_status = self.player.as_ref().unwrap().get_playback_status()?;
+
             // Separate scope so that p is dropped, releasing the lock.
             {
                 let mut p = playing.write().expect("Poisoned lock");
                 if p.is_none() {
                     // safety: self.player is guaranteed to be Some earlier in the loop iteration
-                    *p = Some(PlayingInfo::new(self.player.as_mut().unwrap().get_metadata()?, max_size))
+                    *p = Some(
+                        PlayingInfo::new(
+                            self.player.as_mut().unwrap().get_metadata()?,
+                            max_size,
+                            name.clone(),
+                            playback_status,
+                        ),
+                    )
                 }
             }
 
@@ -107,21 +119,38 @@ impl Watcher {
                 match evt {
                     Ok(Event::TrackChanged(m)) => {
                         let mut p = playing.write().expect("Poisoned lock");
-                        *p = Some(PlayingInfo::new(m, max_size))
+                        *p = Some(
+                            PlayingInfo::new(
+                                m,
+                                max_size,
+                                name.clone(),
+                                playback_status,
+                            )
+                        )
                     },
-                    Ok(Event::PlayerShutDown) => {
-                        self.player = None;
-                        let mut p = playing.write().expect("Poisoned lock");
-                        *p = None;
-                        break;
-                    },
-                    Err(EventError::DBusError(_)) => {
+                    Ok(Event::PlayerShutDown) | Err(EventError::DBusError(_)) => {
                         // TODO: Shutting down a player seems to error without
                         // giving PlayerShutDown, contrary to docs.
                         self.player = None;
                         let mut p = playing.write().expect("Poisoned lock");
                         *p = None;
                         break;
+                    },
+                    Ok(Event::Paused) | Ok(Event::Stopped) => {
+                        let mut p = playing.write().expect("Poisoned lock");
+                        *p = p.as_ref().map(|x| {
+                            let mut v = (*x).clone();
+                            v.playback_status = PlaybackStatus::Paused;
+                            v
+                        });
+                    },
+                    Ok(Event::Playing) => {
+                        let mut p = playing.write().expect("Poisoned lock");
+                        *p = p.as_ref().map(|x| {
+                            let mut v = (*x).clone();
+                            v.playback_status = PlaybackStatus::Playing;
+                            v
+                        });
                     },
                     Err(e) => {
                         Err(e)?
@@ -141,16 +170,46 @@ impl Watcher {
     }
 }
 
+#[derive(Clone)]
 pub struct PlayingInfo {
     arr: Vec<String>,
     start: usize,
     end: usize,
     size: usize,
     display: Option<String>,
+    player_name: String,
+    playback_status: PlaybackStatus,
+}
+
+fn player_controls(
+    name: &str,
+    playback_status: PlaybackStatus,
+) -> String {
+
+    let prev = format!(" %{{A1:playerctl -p {} previous :}}%{{A}}", name);
+    let next = format!("%{{A1:playerctl -p {} next :}}%{{A}}", name);
+
+    let center = match playback_status {
+        PlaybackStatus::Playing => format!("%{{A1:playerctl -p {} pause :}}%{{A}}", name),
+        PlaybackStatus::Paused |
+        PlaybackStatus::Stopped => format!("%{{A1:playerctl -p {} play :}}%{{A}}", name),
+    };
+
+    vec![
+        prev,
+        center,
+        next,
+    ].join("")
 }
 
 impl PlayingInfo {
-    fn new(metadata: Metadata, size: usize) -> Self{
+
+    fn new(
+        metadata: Metadata,
+        size: usize,
+        player_name: String,
+        playback_status: PlaybackStatus,
+    ) -> Self{
         let artist = match metadata.get("xesam:artist") {
             Some(MetadataValue::Array(vvs)) => {
                 match vvs.first() {
@@ -166,10 +225,16 @@ impl PlayingInfo {
             _ => None
         };
 
-        Self::from_info(artist, title, size)
+        Self::from_info(artist, title, size, player_name, playback_status)
     }
 
-    fn from_info(artist: Option<&String>, title: Option<&String>, size: usize) -> Self {
+    fn from_info(
+        artist: Option<&String>,
+        title: Option<&String>,
+        size: usize,
+        player_name: String,
+        playback_status: PlaybackStatus,
+    ) -> Self {
         let s = format!(
             "{} - {} || ",
             artist.unwrap_or(&String::from(UNKNOWN)),
@@ -202,6 +267,8 @@ impl PlayingInfo {
                     None
                 }
             },
+            player_name,
+            playback_status,
         }
     }
 
@@ -213,15 +280,19 @@ impl PlayingInfo {
         }
     }
 
-    fn next(&mut self) -> String {
-        self.display.clone().unwrap_or(
+    fn next(&mut self, include_controls: bool) -> String {
+        let mut retv = self.display.clone().unwrap_or(
             {
                 let retv = self.get_window();
                 self.start = (self.start + self.size) % self.arr.len();
                 self.end = (self.end + self.size) % self.arr.len();
                 retv
             }
-        )
+        );
+        if include_controls {
+            retv += &player_controls(&self.player_name, self.playback_status);
+        }
+        retv
     }
 }
 
@@ -231,14 +302,14 @@ mod tests {
 
     fn test(info: &mut PlayingInfo, frames: Vec<&str>) {
         for frame in frames {
-            assert_eq!(frame, info.next());
+            assert_eq!(frame, info.next(false));
         }
     }
 
     #[test]
     fn test_no_info() {
         test(
-            &mut PlayingInfo::from_info(None, None, 1),
+            &mut PlayingInfo::from_info(None, None, 1, "".to_string(), PlaybackStatus::Playing),
             vec![ "?", "?", "?", " ", "-", " ", "?", "?", "?", " ", "|", "|", " ", "?" ],
         )
     }
@@ -250,6 +321,8 @@ mod tests {
                 Some(&"A".to_string()),
                 Some(&"B".to_string()),
                 5,
+                "".to_string(),
+                PlaybackStatus::Playing,
             ),
             vec![ "A - B", "A - B" ],
         )
@@ -264,6 +337,8 @@ mod tests {
                 Some(&"A".to_string()),
                 Some(&"B".to_string()),
                 7,
+                "".to_string(),
+                PlaybackStatus::Playing,
             ),
             vec![ " A - B ", " A - B " ],
         );
@@ -272,6 +347,8 @@ mod tests {
                 Some(&"A".to_string()),
                 Some(&"B".to_string()),
                 8,
+                "".to_string(),
+                PlaybackStatus::Playing,
             ),
             vec![ " A - B  ", " A - B  " ],
         )
@@ -285,6 +362,8 @@ mod tests {
                 Some(&"Bob Marley & The Wailers".to_string()),
                 Some(&"Easy Skanking".to_string()),
                 3,
+                "".to_string(),
+                PlaybackStatus::Playing,
             ),
             vec![ "Bob", " Ma", "rle", "y &", " Th", "e W", "ail", "ers", " - ", "Eas", "y S", "kan", "kin", "g |", "| B", "ob "],
         )
@@ -299,6 +378,8 @@ mod tests {
                 Some(&"P\u{0065}\u{0301}n".to_string()),
                 Some(&"P\u{0065}\u{0301}n".to_string()),
                 5,
+                "".to_string(),
+                PlaybackStatus::Playing,
             ),
             vec![
                 "P\u{0065}\u{0301}n -",
@@ -322,6 +403,8 @@ mod tests {
                 Some(&"ミドリ".to_string()),
                 Some(&"ゆきこさん".to_string()),
                 5,
+                "".to_string(),
+                PlaybackStatus::Playing,
             ),
             vec![
                 "ミドリ -",

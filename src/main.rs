@@ -28,6 +28,8 @@ struct Args {
     update_frequency: u64,
     #[arg(short, long, default_value_t = 15, help="The length of the display window")]
     banner_size: usize,
+    #[arg(short, long, help="Include player controls in the module")]
+    include_controls: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -35,7 +37,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut watcher = Watcher::new()?;
     watcher.watch(
         Duration::from_millis(args.update_frequency),
-        args.banner_size
+        args.banner_size - if args.include_controls { 4 } else { 0 },
+        args.include_controls,
     )?;
     Ok(())
 }
