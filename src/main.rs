@@ -15,30 +15,39 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>. 
 
+mod args;
+mod control;
 mod watcher;
 
+use clap::Parser;
+use crate::args::{Args, Command};
 use crate::watcher::Watcher;
 use std::time::Duration;
-use clap::Parser;
-
-#[derive(Parser)]
-#[command(version, about = "A good music status display for polybar", long_about = None)]
-struct Args {
-    #[arg(short, long, default_value_t = 1500, help="The frequency, in milliseconds, that the display window will update")]
-    update_frequency: u64,
-    #[arg(short, long, default_value_t = 15, help="The length of the display window")]
-    banner_size: usize,
-    #[arg(short, long, help="Include player controls in the module")]
-    include_controls: bool,
-}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    let mut watcher = Watcher::new()?;
-    watcher.watch(
-        Duration::from_millis(args.update_frequency),
-        args.banner_size - if args.include_controls { 4 } else { 0 },
-        args.include_controls,
-    )?;
+    if args.command.is_some() {
+        match args.command.unwrap() {
+            Command::Control { player, operation } =>
+                control::control(player, operation)?
+        }
+    } else {
+        let mut watcher = Watcher::new()?;
+        let mut include_controls_binary = None;
+        if args.include_controls {
+            include_controls_binary = Some(
+                std::env::current_exe()?
+                    .into_os_string()
+                    .into_string()
+                    .map_err(|_| format!("Failed to find current executable path??"))?
+                );
+        }
+        watcher.watch(
+            Duration::from_millis(args.update_frequency),
+            args.banner_size - if args.include_controls { 4 } else { 0 },
+            include_controls_binary,
+        )?;
+    }
+
     Ok(())
 }

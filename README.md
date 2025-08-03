@@ -38,10 +38,6 @@ Add the module wherever in your polybar, e.g. in the middle:
 modules-center = music
 ```
 
-## Dependencies
-
-`playerctl` is required for media controls to work.
-
 # Font debugging
 
 If you have trouble with some characters not displaying, give the polybar wiki [page on fonts](https://github.com/polybar/polybar/wiki/Fonts) a read.

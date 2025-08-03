@@ -63,7 +63,7 @@ impl Watcher {
         &mut self,
         update_interval: time::Duration,
         max_size: usize,
-        include_controls: bool,
+        include_controls_binary: Option<String>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let playing = Arc::new(RwLock::new(None::<PlayingInfo>));
         let playing_clone = Arc::clone(&playing);
@@ -73,7 +73,7 @@ impl Watcher {
                 {
                     let mut v = playing_clone.write().unwrap();
                     if v.is_some() {
-                        println!("{}", v.as_mut().unwrap().next(include_controls));
+                        println!("{}", v.as_mut().unwrap().next(include_controls_binary.clone()));
                     } else {
                         println!("")
                     }
@@ -184,15 +184,16 @@ pub struct PlayingInfo {
 fn player_controls(
     name: &str,
     playback_status: PlaybackStatus,
+    binary_name: String,
 ) -> String {
 
-    let prev = format!(" %{{A1:playerctl -p {} previous :}}%{{A}}", name);
-    let next = format!("%{{A1:playerctl -p {} next :}}%{{A}}", name);
+    let prev = format!(" %{{A1:{} control -p {} -o previous :}}%{{A}}", binary_name, name);
+    let next = format!("%{{A1:{} control -p {} -o next :}}%{{A}}", binary_name, name);
 
     let center = match playback_status {
-        PlaybackStatus::Playing => format!("%{{A1:playerctl -p {} pause :}}%{{A}}", name),
+        PlaybackStatus::Playing => format!("%{{A1:{} control -p {} -o toggle :}}%{{A}}", binary_name, name),
         PlaybackStatus::Paused |
-        PlaybackStatus::Stopped => format!("%{{A1:playerctl -p {} play :}}%{{A}}", name),
+        PlaybackStatus::Stopped => format!("%{{A1:{} control -p {} -o toggle :}}%{{A}}", binary_name, name),
     };
 
     vec![
@@ -280,7 +281,7 @@ impl PlayingInfo {
         }
     }
 
-    fn next(&mut self, include_controls: bool) -> String {
+    fn next(&mut self, include_controls_binary: Option<String>) -> String {
         let mut retv = self.display.clone().unwrap_or(
             {
                 let retv = self.get_window();
@@ -289,8 +290,8 @@ impl PlayingInfo {
                 retv
             }
         );
-        if include_controls {
-            retv += &player_controls(&self.player_name, self.playback_status);
+        if include_controls_binary.is_some() {
+            retv += &player_controls(&self.player_name, self.playback_status, include_controls_binary.unwrap());
         }
         retv
     }
@@ -302,7 +303,7 @@ mod tests {
 
     fn test(info: &mut PlayingInfo, frames: Vec<&str>) {
         for frame in frames {
-            assert_eq!(frame, info.next(false));
+            assert_eq!(frame, info.next(None));
         }
     }
 
